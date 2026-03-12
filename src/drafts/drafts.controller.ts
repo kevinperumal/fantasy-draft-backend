@@ -1,6 +1,7 @@
 import { Controller, Post, Body } from '@nestjs/common';
 import { DraftsService } from './drafts.service';
 import { HttpService } from '@nestjs/axios';
+import { Public } from '../auth/public.decorator';
 
 export class PickDto {
   sessionId?: string;
@@ -31,6 +32,8 @@ export class DraftsController {
     return { status: 'started', leagueId, sport };
   }
 
+  // Called by the injected script inside the Puppeteer browser — no auth cookie available
+  @Public()
   @Post('picks')
   async handlePick(@Body() body: PickDto) {
     await this.draftsService.processPick(body);

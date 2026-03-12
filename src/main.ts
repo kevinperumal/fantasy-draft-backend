@@ -1,35 +1,18 @@
 import { NestFactory } from '@nestjs/core';
+import cookieParser from 'cookie-parser';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
-  // Global CORS + preflight
-  app.use((req: any, res: any, next: () => void) => {
-    res.header('Access-Control-Allow-Origin', '*'); // or 'https://fantasy.espn.com'
-    res.header(
-      'Access-Control-Allow-Methods',
-      'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
-    );
-    res.header(
-      'Access-Control-Allow-Headers',
-      'Origin, X-Requested-With, Content-Type, Accept, Authorization',
-    );
+  app.use(cookieParser());
 
-    if (req.method === 'OPTIONS') {
-      return res.sendStatus(204);
-    }
-
-    next();
-  });
-
+  const allowedOrigin = process.env.ALLOWED_ORIGIN || 'http://localhost:5173';
   app.enableCors({
-    origin: true,
+    origin: allowedOrigin,
     methods: ['GET', 'POST', 'OPTIONS', 'PUT', 'DELETE', 'PATCH'],
     allowedHeaders: ['Content-Type', 'Authorization'],
-    credentials: false,
-    preflightContinue: false,
-    optionsSuccessStatus: 204,
+    credentials: true,
   });
 
   await app.listen(3000);
