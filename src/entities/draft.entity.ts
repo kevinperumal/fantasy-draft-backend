@@ -1,0 +1,55 @@
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  CreateDateColumn,
+  UpdateDateColumn,
+  ManyToOne,
+  OneToMany,
+  JoinColumn,
+} from 'typeorm';
+
+export enum DraftStatus {
+  ACTIVE = 'active',
+  COMPLETED = 'completed',
+  CANCELED = 'canceled',
+}
+
+@Entity('drafts')
+export class Draft {
+  @PrimaryGeneratedColumn('uuid')
+  id: string;
+
+  @Column()
+  userId: string;
+
+  @ManyToOne('User', 'drafts')
+  @JoinColumn({ name: 'userId' })
+  user: any;
+
+  @Column()
+  leagueId: string;
+
+  @Column({ default: 'baseball' })
+  sport: string;
+
+  // Provisioned Google Sheet URL for this draft
+  @Column({ nullable: true, type: 'text' })
+  sheetUrl: string;
+
+  @Column({
+    type: 'enum',
+    enum: DraftStatus,
+    default: DraftStatus.ACTIVE,
+  })
+  status: DraftStatus;
+
+  @CreateDateColumn()
+  createdAt: Date;
+
+  @UpdateDateColumn()
+  updatedAt: Date;
+
+  @OneToMany('Job', 'draft')
+  jobs: any[];
+}
