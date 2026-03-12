@@ -9,8 +9,8 @@ export class SheetsService {
   private sheets: sheets_v4.Sheets;
   private auth: any; // google.auth.OAuth2Client
 
-  private readonly spreadsheetId = '1xOTF5J065gABOOVm930ANNcq0kGooZ6Ua7GdrY6b5sc';
-  private readonly sheetId = 1138131281;
+  private readonly spreadsheetId = process.env.SHEETS_SPREADSHEET_ID || '';
+  private readonly sheetId = parseInt(process.env.SHEETS_SHEET_ID || '0', 10);
   private readonly highlightColumnCount = 8;
 
   constructor() {
