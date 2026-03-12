@@ -1,11 +1,17 @@
 import { Module } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { HttpModule } from '@nestjs/axios';
 import { DraftsController } from './drafts.controller';
 import { DraftsService } from './drafts.service';
 import { SheetsService } from '../sheets/sheets.service';
-import { HttpModule } from '@nestjs/axios';
+import { Draft } from '../entities/draft.entity';
+import { Job } from '../entities/job.entity';
 
 @Module({
-  imports: [HttpModule],
+  imports: [
+    HttpModule,
+    TypeOrmModule.forFeature([Draft, Job]),
+  ],
   controllers: [DraftsController],
   providers: [DraftsService, SheetsService],
 })
