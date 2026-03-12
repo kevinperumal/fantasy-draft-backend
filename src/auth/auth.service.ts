@@ -35,6 +35,7 @@ export class AuthService implements OnApplicationBootstrap {
   private async seedUser(username: string, password: string) {
     const existing = await this.userRepo.findOne({ where: { username } });
     if (existing) return;
+    console.log(`[Auth] Seeding user: ${username}, password length: ${password.length}`);
     const passwordHash = await bcrypt.hash(password, 12);
     await this.userRepo.save(this.userRepo.create({ username, passwordHash }));
     console.log(`[Auth] Seeded user: ${username}`);
