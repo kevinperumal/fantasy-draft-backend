@@ -21,10 +21,11 @@ import { Job } from './entities/job.entity';
         type: 'postgres',
         url: config.getOrThrow<string>('DATABASE_URL'),
         entities: [User, Draft, Job],
-        synchronize: config.get<string>('NODE_ENV') !== 'production',
-        ssl: config.get<string>('DATABASE_SSL') !== 'false'
-          ? { rejectUnauthorized: false }
-          : false,
+        synchronize: config.get<string>('DB_SYNCHRONIZE') === 'true',
+        ssl:
+          config.get<string>('DATABASE_SSL') !== 'false'
+            ? { rejectUnauthorized: false }
+            : false,
       }),
     }),
     AuthModule,
