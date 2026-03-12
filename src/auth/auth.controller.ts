@@ -18,6 +18,16 @@ class LoginDto {
 
 const COOKIE_NAME = 'auth_token';
 const COOKIE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+const IS_PROD = process.env.NODE_ENV === 'production';
+
+// Cross-origin cookie config (Vercel frontend → Railway backend).
+// sameSite: 'none' is required for cross-origin cookies; it mandates secure: true.
+const COOKIE_OPTIONS = {
+  httpOnly: true,
+  secure: IS_PROD,
+  sameSite: (IS_PROD ? 'none' : 'lax') as 'none' | 'lax',
+  maxAge: COOKIE_MAX_AGE_MS,
+};
 
 @Controller('auth')
 export class AuthController {
@@ -33,19 +43,14 @@ export class AuthController {
     if (!user) throw new UnauthorizedException('Invalid credentials');
 
     const token = this.authService.signToken(user);
-    res.cookie(COOKIE_NAME, token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      maxAge: COOKIE_MAX_AGE_MS,
-    });
+    res.cookie(COOKIE_NAME, token, COOKIE_OPTIONS);
 
     return { ok: true, username: user.username };
   }
 
   @Post('logout')
   logout(@Res({ passthrough: true }) res: Response) {
-    res.clearCookie(COOKIE_NAME);
+    res.clearCookie(COOKIE_NAME, COOKIE_OPTIONS);
     return { ok: true };
   }
 
