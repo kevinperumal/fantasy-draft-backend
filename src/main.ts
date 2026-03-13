@@ -9,7 +9,14 @@ async function bootstrap() {
 
   const allowedOrigin = process.env.ALLOWED_ORIGIN || 'http://localhost:5173';
   app.enableCors({
-    origin: allowedOrigin,
+    origin: (origin, callback) => {
+      // Allow requests with no origin (e.g. server-to-server) or from ESPN (injected script)
+      if (!origin || origin === allowedOrigin || origin.endsWith('.espn.com') || origin.endsWith('.espn.net')) {
+        callback(null, true);
+      } else {
+        callback(new Error(`CORS: origin ${origin} not allowed`));
+      }
+    },
     methods: ['GET', 'POST', 'OPTIONS', 'PUT', 'DELETE', 'PATCH'],
     allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: true,
