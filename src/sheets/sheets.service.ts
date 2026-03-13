@@ -7,7 +7,7 @@ export class SheetsService {
   private sheets: sheets_v4.Sheets | null = null;
   private auth: any = null;
 
-  private readonly spreadsheetId = process.env.SHEETS_SPREADSHEET_ID || '';
+  private readonly fallbackSpreadsheetId = process.env.SHEETS_SPREADSHEET_ID || '';
   private readonly sheetId = parseInt(process.env.SHEETS_SHEET_ID || '0', 10);
   private readonly highlightColumnCount = 8;
 
@@ -78,16 +78,21 @@ export class SheetsService {
     }
   }
 
-  async highlightPlayer(player: string, team: string, position: string) {
+  async highlightPlayer(player: string, team: string, position: string, spreadsheetId?: string) {
     if (!this.sheets) {
       this.logger.error('Sheets client not initialized yet');
+      return;
+    }
+    const targetSpreadsheetId = spreadsheetId || this.fallbackSpreadsheetId;
+    if (!targetSpreadsheetId) {
+      this.logger.warn('No spreadsheet ID available — skipping highlight');
       return;
     }
 
     this.logger.log(`Highlighting player in sheet: ${player} / ${team} / ${position}`);
 
     const res = await this.sheets.spreadsheets.values.get({
-      spreadsheetId: this.spreadsheetId,
+      spreadsheetId: targetSpreadsheetId,
       range: 'B:D',
     });
 
@@ -138,7 +143,7 @@ export class SheetsService {
     };
 
     await this.sheets.spreadsheets.batchUpdate({
-      spreadsheetId: this.spreadsheetId,
+      spreadsheetId: targetSpreadsheetId,
       requestBody: request,
     });
 

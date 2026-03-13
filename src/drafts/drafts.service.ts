@@ -19,9 +19,21 @@ export class DraftsService {
   ) {}
 
   async processPick(pick: PickDto) {
-    const { player, team, position, sessionId } = pick;
-    this.logger.log(`Processing pick: ${player} / ${team} / ${position} (session: ${sessionId})`);
-    await this.sheetsService.highlightPlayer(player, team, position);
+    const { player, team, position, sessionId, leagueId } = pick;
+    this.logger.log(`Processing pick: ${player} / ${team} / ${position} (session: ${sessionId}, league: ${leagueId})`);
+
+    let spreadsheetId: string | undefined;
+    if (leagueId) {
+      const draft = await this.draftRepo.findOne({
+        where: { leagueId, status: DraftStatus.ACTIVE },
+      });
+      if (draft?.sheetUrl) {
+        const match = draft.sheetUrl.match(/\/spreadsheets\/d\/([^/]+)/);
+        spreadsheetId = match?.[1];
+      }
+    }
+
+    await this.sheetsService.highlightPlayer(player, team, position, spreadsheetId);
   }
 
   async createDraft(userId: string, leagueId: string, sport = 'baseball') {

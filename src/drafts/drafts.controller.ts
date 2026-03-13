@@ -5,6 +5,7 @@ import { Public } from '../auth/public.decorator';
 
 export class PickDto {
   sessionId?: string;
+  leagueId?: string;
   player: string;
   team: string;
   position: string;
