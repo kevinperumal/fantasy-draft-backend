@@ -46,9 +46,13 @@ export class SheetsService {
     }
     try {
       const drive = google.drive({ version: 'v3', auth: this.auth });
+      const folderId = process.env.SHEETS_FOLDER_ID;
       const res = await drive.files.copy({
         fileId: templateId,
-        requestBody: { name },
+        requestBody: {
+          name,
+          ...(folderId ? { parents: [folderId] } : {}),
+        },
       });
       const newId = res.data.id;
       if (!newId) return null;
