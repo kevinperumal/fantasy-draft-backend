@@ -1,13 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { google, sheets_v4 } from 'googleapis';
-import * as fs from 'fs';
-import * as path from 'path';
 
 @Injectable()
 export class SheetsService {
   private readonly logger = new Logger(SheetsService.name);
-  private sheets: sheets_v4.Sheets;
-  private auth: any; // google.auth.OAuth2Client
+  private sheets: sheets_v4.Sheets | null = null;
+  private auth: any = null;
 
   private readonly spreadsheetId = process.env.SHEETS_SPREADSHEET_ID || '';
   private readonly sheetId = parseInt(process.env.SHEETS_SHEET_ID || '0', 10);
@@ -20,19 +18,23 @@ export class SheetsService {
   }
 
   private async initClient() {
-    const credentialsPath = path.join(process.cwd(), 'credentials.json');
-    const tokenPath = path.join(process.cwd(), 'token.json');
+    const raw = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+    if (!raw) {
+      this.logger.warn('GOOGLE_SERVICE_ACCOUNT_JSON not set — Sheets disabled');
+      return;
+    }
 
-    const credentials = JSON.parse(fs.readFileSync(credentialsPath, 'utf8'));
-    const token = JSON.parse(fs.readFileSync(tokenPath, 'utf8'));
+    const credentials = JSON.parse(raw);
+    const auth = new google.auth.GoogleAuth({
+      credentials,
+      scopes: [
+        'https://www.googleapis.com/auth/spreadsheets',
+        'https://www.googleapis.com/auth/drive',
+      ],
+    });
 
-    const { client_secret, client_id, redirect_uris } = credentials.installed;
-
-    const oAuth2Client = new google.auth.OAuth2(client_id, client_secret, redirect_uris[0]);
-    oAuth2Client.setCredentials(token);
-
-    this.auth = oAuth2Client;
-    this.sheets = google.sheets({ version: 'v4', auth: oAuth2Client });
+    this.auth = await auth.getClient();
+    this.sheets = google.sheets({ version: 'v4', auth: this.auth });
   }
 
   // Duplicate a template spreadsheet and return the URL of the new sheet.
