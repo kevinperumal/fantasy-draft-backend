@@ -88,6 +88,9 @@ export class SheetsService {
       this.logger.warn('No spreadsheet ID available — skipping highlight');
       return;
     }
+    // Per-draft sheets are fresh duplicates with a single tab (sheetId 0).
+    // The legacy fallback sheet uses SHEETS_SHEET_ID env var.
+    const targetSheetId = spreadsheetId ? 0 : this.sheetId;
 
     this.logger.log(`Highlighting player in sheet: ${player} / ${team} / ${position}`);
 
@@ -121,7 +124,7 @@ export class SheetsService {
         {
           updateCells: {
             range: {
-              sheetId: this.sheetId,
+              sheetId: targetSheetId,
               startRowIndex: rowIndex,
               endRowIndex: rowIndex + 1,
               startColumnIndex: 0,
