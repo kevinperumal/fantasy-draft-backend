@@ -18,9 +18,22 @@ export class SheetsService {
   }
 
   private async initClient() {
+    const clientId = process.env.GOOGLE_OAUTH_CLIENT_ID;
+    const clientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET;
+    const refreshToken = process.env.GOOGLE_OAUTH_REFRESH_TOKEN;
+
+    if (clientId && clientSecret && refreshToken) {
+      const oAuth2Client = new google.auth.OAuth2(clientId, clientSecret);
+      oAuth2Client.setCredentials({ refresh_token: refreshToken });
+      this.auth = oAuth2Client;
+      this.sheets = google.sheets({ version: 'v4', auth: oAuth2Client });
+      this.logger.log('Google Sheets client initialized (OAuth2 user credentials)');
+      return;
+    }
+
     const raw = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
     if (!raw) {
-      this.logger.warn('GOOGLE_SERVICE_ACCOUNT_JSON not set — Sheets disabled');
+      this.logger.warn('No Google credentials set — Sheets disabled');
       return;
     }
 
@@ -35,6 +48,7 @@ export class SheetsService {
 
     this.auth = await auth.getClient();
     this.sheets = google.sheets({ version: 'v4', auth: this.auth });
+    this.logger.log('Google Sheets client initialized (service account)');
   }
 
   // Duplicate a template spreadsheet and return the URL of the new sheet.
