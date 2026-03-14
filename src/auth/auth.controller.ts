@@ -7,12 +7,18 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import type { Request } from 'express';
+import { IsString, MaxLength } from 'class-validator';
 import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
 import { Public } from './public.decorator';
 
 class LoginDto {
+  @IsString()
+  @MaxLength(100)
   username: string;
+
+  @IsString()
+  @MaxLength(200)
   password: string;
 }
 
