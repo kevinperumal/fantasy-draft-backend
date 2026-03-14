@@ -56,6 +56,7 @@ export class DraftsController {
   ) {
     return this.draftsService.createDraft(
       req.user.sub,
+      req.user.username,
       body.leagueId,
       body.sport,
       body.espnTeamName,

@@ -57,8 +57,22 @@ export class DraftsService {
     });
   }
 
+  // Resolve ESPN team name from env for a given username.
+  // Env vars USER1_ESPN_TEAM_NAME / USER2_ESPN_TEAM_NAME serve as defaults
+  // when the user doesn't supply it explicitly.
+  private resolveEspnTeamName(username: string, explicit?: string): string | null {
+    if (explicit) return explicit;
+    const knownTeams: Record<string, string> = {};
+    const u1 = process.env.USER1_USERNAME;
+    const u2 = process.env.USER2_USERNAME;
+    if (u1 && process.env.USER1_ESPN_TEAM_NAME) knownTeams[u1] = process.env.USER1_ESPN_TEAM_NAME;
+    if (u2 && process.env.USER2_ESPN_TEAM_NAME) knownTeams[u2] = process.env.USER2_ESPN_TEAM_NAME;
+    return knownTeams[username] ?? null;
+  }
+
   async createDraft(
     userId: string,
+    username: string,
     leagueId: string,
     sport = 'baseball',
     espnTeamName?: string,
@@ -86,8 +100,8 @@ export class DraftsService {
       leagueId,
       sport,
       sheetUrl: sheetUrl ?? undefined,
-      espnTeamName: espnTeamName ?? null,
-      leagueSize: leagueSize ?? null,
+      espnTeamName: this.resolveEspnTeamName(username, espnTeamName),
+      leagueSize: leagueSize ?? parseInt(process.env.LEAGUE_SIZE || '12', 10),
     });
     const draft = await this.draftRepo.save(draftEntity) as Draft;
 

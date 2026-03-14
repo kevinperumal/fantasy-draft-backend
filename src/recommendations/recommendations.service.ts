@@ -6,11 +6,21 @@ import { SheetsService } from '../sheets/sheets.service';
 import { Draft, DraftStatus } from '../entities/draft.entity';
 import { PickRecord } from '../entities/pick.entity';
 
-// ─── Player metadata from spreadsheet ───────────────────────────────────────
+// ─── League configuration ─────────────────────────────────────────────────────
+// Roster targets for this specific 12-team ESPN league.
+// C×1, 1B×1, 2B×1, 3B×1, SS×1, OF×4, P×9 + flex slots (MI, CI, UTIL, DH, BN).
+const ROSTER_TARGETS: Record<string, number> = {
+  C: 1, '1B': 1, '2B': 1, '3B': 1, SS: 1, OF: 4, P: 9,
+};
+const TOTAL_ROSTER_SIZE = 25;
+
+// ─── Player metadata from spreadsheet ────────────────────────────────────────
+// Column layout (confirmed from sheet): A=RotoV, B=Player, C=Pro Team,
+// D=Position, E=ESPN Draft Room rank, F=ADP, G=Pitcher flag, H=Closer Rank
 
 export interface PlayerMeta {
   name: string;
-  nflTeam: string;
+  proTeam: string;
   position: string;
   rotowireRank: number;
   espnRank: number;
@@ -19,7 +29,6 @@ export interface PlayerMeta {
   closerRank: number | null;
 }
 
-// Column indices into each spreadsheet row (0-based). All configurable via env.
 function colIndex(envKey: string, defaultVal: number): number {
   const v = process.env[envKey];
   return v !== undefined ? parseInt(v, 10) : defaultVal;
@@ -28,7 +37,7 @@ function colIndex(envKey: string, defaultVal: number): number {
 function parsePlayerRow(row: string[]): PlayerMeta | null {
   const COL_RW_RANK   = colIndex('SHEET_COL_ROTOWIRE_RANK', 0);
   const COL_NAME      = colIndex('SHEET_COL_NAME', 1);
-  const COL_NFL_TEAM  = colIndex('SHEET_COL_NFL_TEAM', 2);
+  const COL_PRO_TEAM  = colIndex('SHEET_COL_NFL_TEAM', 2);
   const COL_POSITION  = colIndex('SHEET_COL_POSITION', 3);
   const COL_ESPN_RANK = colIndex('SHEET_COL_ESPN_RANK', 4);
   const COL_ADP       = colIndex('SHEET_COL_ADP', 5);
@@ -38,67 +47,133 @@ function parsePlayerRow(row: string[]): PlayerMeta | null {
   const name = row[COL_NAME]?.trim();
   if (!name) return null;
 
+  const rawPosition = row[COL_POSITION]?.trim().toUpperCase() || '';
+  const pitcherFlag = row[COL_PITCHER]?.trim();
+  const isPitcher = ['SP', 'RP', 'P'].includes(rawPosition) || pitcherFlag === '1';
+
   return {
     name,
-    nflTeam: row[COL_NFL_TEAM]?.trim() || '',
-    position: row[COL_POSITION]?.trim() || '',
+    proTeam: row[COL_PRO_TEAM]?.trim() || '',
+    position: rawPosition,
     rotowireRank: parseFloat(row[COL_RW_RANK]) || 9999,
     espnRank: parseFloat(row[COL_ESPN_RANK]) || 9999,
     adp: parseFloat(row[COL_ADP]) || 9999,
-    isPitcher: ['SP', 'RP', 'P'].includes(row[COL_POSITION]?.trim().toUpperCase() || ''),
+    isPitcher,
     closerRank: row[COL_CLOSER] ? parseFloat(row[COL_CLOSER]) : null,
   };
 }
 
-// ─── Candidate feature computation ──────────────────────────────────────────
+// ─── Position normalization ───────────────────────────────────────────────────
+
+function normalizePosition(pos: string): string {
+  const p = (pos || '').toUpperCase();
+  if (['LF', 'CF', 'RF', 'OF'].includes(p)) return 'OF';
+  if (['SP', 'RP', 'P'].includes(p)) return 'P';
+  return p; // C, 1B, 2B, 3B, SS, DH stay as-is
+}
+
+// ─── Roster needs computation ─────────────────────────────────────────────────
+
+interface RosterNeeds {
+  openNeeds: string[];          // e.g. ["OF (need 3 more)", "P (need 7 more)"]
+  rosterByPosition: Record<string, number>;
+  totalPicked: number;
+  remainingRosterSlots: number;
+}
+
+function computeRosterNeeds(roster: PlayerMeta[]): RosterNeeds {
+  const rosterByPosition: Record<string, number> = {};
+  for (const p of roster) {
+    const pos = normalizePosition(p.position);
+    rosterByPosition[pos] = (rosterByPosition[pos] || 0) + 1;
+  }
+
+  const openNeeds: string[] = [];
+  for (const [pos, target] of Object.entries(ROSTER_TARGETS)) {
+    const have = rosterByPosition[pos] || 0;
+    const need = target - have;
+    if (need > 0) openNeeds.push(`${pos} (need ${need} more)`);
+  }
+  // If all primary slots filled, mention flex
+  if (openNeeds.length === 0 && roster.length < TOTAL_ROSTER_SIZE) {
+    openNeeds.push('Flex/bench depth');
+  }
+
+  return {
+    openNeeds,
+    rosterByPosition,
+    totalPicked: roster.length,
+    remainingRosterSlots: TOTAL_ROSTER_SIZE - roster.length,
+  };
+}
+
+// ─── Snake draft pick calculator ──────────────────────────────────────────────
+
+function nextPickInSnakeDraft(draftSlot: number, leagueSize: number, afterPick: number): number {
+  let round = 1;
+  while (true) {
+    const pick =
+      round % 2 === 1
+        ? (round - 1) * leagueSize + draftSlot
+        : round * leagueSize - draftSlot + 1;
+    if (pick > afterPick) return pick;
+    round++;
+    if (round > 50) return afterPick + leagueSize;
+  }
+}
+
+// ─── Deterministic feature computation ───────────────────────────────────────
 
 interface CandidateFeatures {
   player: PlayerMeta;
-  valueVsEspn: number;      // espnRank - rotowireRank (positive = undervalued by ESPN room)
-  valueVsAdp: number;       // adp - rotowireRank (positive = undervalued vs ADP)
-  adpFromNow: number;       // adp - currentPick (how many picks until ADP)
-  urgencyScore: number;     // 0–100
-  likelySurvives: boolean;  // survives until the team's next pick
+  valueVsEspn: number;        // espnRank - rotowireRank; positive = ESPN undervalues
+  valueVsAdp: number;         // adp - rotowireRank; positive = ADP undervalues
+  adpFromNow: number;         // adp - currentPick; how many picks until ADP
+  urgencyScore: number;       // 0–100
+  likelySurvives: boolean;    // survives until team's next pick
   fillsNeed: boolean;
-  playersAheadAtPosition: number; // stronger Rotowire players at same position still available
+  needDeficit: number;        // how far below roster target this position is (0 if not needed)
+  playersAheadAtPosition: number;
 }
 
 function computeFeatures(
   player: PlayerMeta,
   currentPick: number,
-  nextPick: number | null,
   picksUntilNext: number | null,
-  teamPositions: Set<string>,
+  rosterByPosition: Record<string, number>,
   availableByPosition: Map<string, PlayerMeta[]>,
 ): CandidateFeatures {
+  const pos = normalizePosition(player.position);
   const valueVsEspn = player.espnRank - player.rotowireRank;
   const valueVsAdp = player.adp - player.rotowireRank;
   const adpFromNow = player.adp - currentPick;
 
-  // Urgency: higher when adpFromNow is small relative to picksUntilNext
+  // Urgency score
   let urgencyScore = 50;
   if (picksUntilNext !== null && picksUntilNext > 0) {
-    if (adpFromNow <= 0) {
-      urgencyScore = 100; // Already at or past ADP — very urgent
-    } else if (adpFromNow < picksUntilNext * 0.5) {
-      urgencyScore = 90;
-    } else if (adpFromNow < picksUntilNext) {
-      urgencyScore = 75;
-    } else if (adpFromNow < picksUntilNext * 1.5) {
-      urgencyScore = 40;
-    } else {
-      urgencyScore = 20; // Likely survives comfortably
-    }
+    if (adpFromNow <= 0) urgencyScore = 100;
+    else if (adpFromNow < picksUntilNext * 0.5) urgencyScore = 90;
+    else if (adpFromNow < picksUntilNext) urgencyScore = 75;
+    else if (adpFromNow < picksUntilNext * 1.5) urgencyScore = 40;
+    else urgencyScore = 20;
   }
-  // ESPN visibility adds urgency: if ESPN room ranks player highly but Rotowire does too
-  if (player.espnRank < currentPick + 5) urgencyScore = Math.min(100, urgencyScore + 15);
+  // ESPN visibility bump: if ESPN room rank is close to current pick, others will see this player
+  if (player.espnRank < currentPick + 8 && valueVsEspn >= 10) {
+    urgencyScore = Math.min(100, urgencyScore + 15);
+  }
+  // Closer bonus: saves are scarce, closers disappear fast
+  if (player.closerRank !== null && player.closerRank <= 5) {
+    urgencyScore = Math.min(100, urgencyScore + 10);
+  }
 
   const likelySurvives = picksUntilNext !== null
-    ? adpFromNow > picksUntilNext * 1.2
-    : adpFromNow > 8;
+    ? adpFromNow > picksUntilNext * 1.3
+    : adpFromNow > 10;
 
-  const pos = normalizePosition(player.position);
-  const fillsNeed = !teamPositions.has(pos);
+  const target = ROSTER_TARGETS[pos] ?? 0;
+  const have = rosterByPosition[pos] ?? 0;
+  const needDeficit = Math.max(0, target - have);
+  const fillsNeed = needDeficit > 0;
 
   const positionPeers = availableByPosition.get(pos) || [];
   const playersAheadAtPosition = positionPeers.filter(
@@ -113,36 +188,17 @@ function computeFeatures(
     urgencyScore,
     likelySurvives,
     fillsNeed,
+    needDeficit,
     playersAheadAtPosition,
   };
 }
 
-function normalizePosition(pos: string): string {
-  const p = pos.toUpperCase();
-  if (['LF', 'CF', 'RF', 'OF'].includes(p)) return 'OF';
-  if (['SP', 'RP', 'P'].includes(p)) return 'P';
-  return p;
-}
+// ─── Position run detection ───────────────────────────────────────────────────
 
-// Snake draft: compute the next pick for a given draft slot
-function nextPickInSnakeDraft(draftSlot: number, leagueSize: number, afterPick: number): number {
-  let round = 1;
-  while (true) {
-    const pick =
-      round % 2 === 1
-        ? (round - 1) * leagueSize + draftSlot
-        : round * leagueSize - draftSlot + 1;
-    if (pick > afterPick) return pick;
-    round++;
-    if (round > 50) return afterPick + leagueSize; // safety fallback
-  }
-}
-
-// Detect if a position run is happening in recent picks
 function detectPositionRuns(recentPicks: PickRecord[]): string[] {
   const counts: Record<string, number> = {};
-  const last8 = recentPicks.slice(-8);
-  for (const p of last8) {
+  const last10 = recentPicks.slice(-10);
+  for (const p of last10) {
     const pos = normalizePosition(p.position || '');
     if (!pos) continue;
     counts[pos] = (counts[pos] || 0) + 1;
@@ -152,25 +208,31 @@ function detectPositionRuns(recentPicks: PickRecord[]): string[] {
     .map(([pos]) => pos);
 }
 
-// ─── AI prompt ───────────────────────────────────────────────────────────────
+// ─── AI prompt ────────────────────────────────────────────────────────────────
 
-const SYSTEM_PROMPT = `You are a fantasy baseball draft advisor integrated into DraftPilot.
+const SYSTEM_PROMPT = `You are a fantasy baseball draft advisor for DraftPilot, advising on a 12-team ESPN Head-to-Head snake draft.
+
+League roster structure: C×1, 1B×1, 2B×1, 3B×1, SS×1, MI×1 (2B/SS flex), CI×1 (1B/3B flex), OF×4, DH×1, UTIL×1, P×9, BN×4. Total: 25 spots.
+Scoring: R, HR, RBI, SB, AVG / K, W, SV, ERA, WHIP.
 
 Rules:
-- Use ONLY the structured data provided. Do not invent stats, ADP values, rankings, or baseball knowledge from outside this request.
-- Rotowire rank is the primary value signal and MUST factor into every recommendation.
-- Explain WHY a player should be taken NOW (timing, need, scarcity) vs later.
+- Use ONLY the structured data provided. Do not invent stats, rankings, or facts from outside this request.
+- Rotowire rank is the primary value signal and MUST be considered in every recommendation.
+- ESPN Draft Room rank shows where a player appears in the draft room — players ranked higher (lower number) are more visible to other drafters and are more at risk of being taken soon.
+- A player with a high Rotowire value but a low ESPN room visibility (high ESPN rank number) is a hidden value that may enter other drafters' radar later — but be careful, the window can close quickly.
+- Pitchers are scarce (9 needed). Balance SP/RP value with injury risk.
+- Closers are extremely scarce — if a top closer is available and your save slot is not filled, that's urgent.
+- Explain WHY a player should be taken NOW vs later using the actual numbers provided.
 - Be concise: explanations should be 1-3 sentences.
-- ESPN room rank matters: a player ranked highly by Rotowire but ranked lower by ESPN is a hidden value that may enter other drafters' radar soon.
 
-Respond with a single valid JSON object matching this schema exactly:
+Respond with a single valid JSON object. Output JSON only — no markdown, no code fences:
 {
   "topPick": { "player": string, "position": string, "rotowireRank": number, "explanation": string },
   "alternatives": [{ "player": string, "position": string, "rotowireRank": number, "reason": string }],
   "likelyGone": [{ "player": string, "position": string, "reason": string }],
   "canWait": [{ "player": string, "position": string, "reason": string }]
 }
-Limit alternatives to 3, likelyGone to 3, canWait to 3. Output JSON only — no markdown, no code fences.`;
+Limit alternatives to 3, likelyGone to 3, canWait to 3.`;
 
 function buildUserMessage(
   teamName: string,
@@ -180,56 +242,55 @@ function buildUserMessage(
   picksUntilNext: number | null,
   draftSlot: number | null,
   roster: PlayerMeta[],
-  openNeeds: string[],
+  needs: RosterNeeds,
   positionRuns: string[],
   candidates: CandidateFeatures[],
 ): string {
   const rosterText = roster.length
-    ? roster.map((p) => `  - ${p.name} (${p.position}, RW: #${p.rotowireRank})`).join('\n')
+    ? roster.map((p) => `  - ${p.name} (${p.position} | ${p.proTeam} | RW #${p.rotowireRank})`).join('\n')
     : '  (no picks yet)';
 
   const candidateText = candidates
     .map((c) => {
       const espnNote =
-        c.valueVsEspn >= 10
-          ? ` [ESPN undervalues by ${c.valueVsEspn} spots — rising radar risk]`
-          : c.valueVsEspn <= -10
-            ? ` [ESPN overvalues vs Rotowire]`
+        c.valueVsEspn >= 15
+          ? ` ← ESPN undervalues by ${c.valueVsEspn} spots (rising radar risk)`
+          : c.valueVsEspn >= 8
+            ? ` ← moderate ESPN undervalue (+${c.valueVsEspn})`
             : '';
+      const closerNote = c.player.closerRank !== null ? ` | Closer rank: #${c.player.closerRank}` : '';
       return [
-        `### ${c.player.name} (${c.player.position})`,
-        `  Rotowire #${c.player.rotowireRank} | ESPN room #${c.player.espnRank}${espnNote} | ADP ${c.player.adp.toFixed(1)}`,
-        `  Value vs ESPN: ${c.valueVsEspn > 0 ? '+' : ''}${c.valueVsEspn} | Value vs ADP: ${c.valueVsAdp > 0 ? '+' : ''}${c.valueVsAdp.toFixed(1)}`,
-        `  ADP from current pick: ${c.adpFromNow.toFixed(1)} | Urgency: ${c.urgencyScore}/100 | Likely survives: ${c.likelySurvives ? 'YES' : 'NO — AT RISK'}`,
-        `  Fills position need: ${c.fillsNeed ? 'YES' : 'no'} | Stronger players ahead at ${c.player.position}: ${c.playersAheadAtPosition}`,
-        c.player.closerRank ? `  Closer rank: ${c.player.closerRank}` : '',
+        `### ${c.player.name} (${c.player.position} | ${c.player.proTeam})`,
+        `  RW #${c.player.rotowireRank} | ESPN room #${c.player.espnRank}${espnNote} | ADP ${c.player.adp.toFixed(1)}${closerNote}`,
+        `  vs ESPN: ${c.valueVsEspn > 0 ? '+' : ''}${c.valueVsEspn} | vs ADP: ${c.valueVsAdp > 0 ? '+' : ''}${c.valueVsAdp.toFixed(1)} | ADP from now: ${c.adpFromNow.toFixed(1)}`,
+        `  Urgency: ${c.urgencyScore}/100 | Survives to next pick: ${c.likelySurvives ? 'YES' : 'NO — AT RISK'}`,
+        `  Fills roster need: ${c.fillsNeed ? `YES (need ${c.needDeficit} more ${normalizePosition(c.player.position)})` : 'no'} | Stronger ${c.player.position} still available: ${c.playersAheadAtPosition}`,
       ]
-        .filter(Boolean)
         .join('\n');
     })
     .join('\n\n');
 
   return `## Draft Context
 - Team: ${teamName}
-- League size: ${leagueSize}
+- League: 12-team ESPN H2H (NCL), snake draft
 - Current overall pick: #${currentPick}
-- Your draft slot: ${draftSlot ?? 'unknown'}
+- Your draft slot: ${draftSlot ?? 'unknown (not yet determined)'}
 - Your next pick: ${nextPick ? `#${nextPick} (${picksUntilNext} picks away)` : 'unknown'}
 
-## Your Roster (${roster.length} players)
+## Your Roster (${needs.totalPicked} / ${TOTAL_ROSTER_SIZE} picks made, ${needs.remainingRosterSlots} slots remaining)
 ${rosterText}
 
-## Open Position Needs
-${openNeeds.length ? openNeeds.join(', ') : 'All primary positions covered'}
+## Open Roster Needs
+${needs.openNeeds.length ? needs.openNeeds.join(', ') : 'All primary positions covered — focus on depth/best available'}
 
 ## Position Run Alert
-${positionRuns.length ? `Recent picks show a run on: ${positionRuns.join(', ')}` : 'No significant position runs detected'}
+${positionRuns.length ? `Recent picks show a run on: ${positionRuns.join(', ')} — other teams are loading up on these` : 'No significant position runs detected'}
 
-## Candidate Players (${candidates.length} players, sorted by urgency)
+## Candidate Players (${candidates.length} shown, sorted by urgency)
 ${candidateText}`;
 }
 
-// ─── Main service ─────────────────────────────────────────────────────────────
+// ─── Result types ──────────────────────────────────────────────────────────────
 
 export interface RecommendationResult {
   generatedAt: string;
@@ -239,6 +300,7 @@ export interface RecommendationResult {
     nextPick: number | null;
     picksUntilNext: number | null;
     rosterCount: number;
+    openNeeds: string[];
   };
   topPick: { player: string; position: string; rotowireRank: number; explanation: string } | null;
   alternatives: { player: string; position: string; rotowireRank: number; reason: string }[];
@@ -246,6 +308,8 @@ export interface RecommendationResult {
   canWait: { player: string; position: string; reason: string }[];
   error?: string;
 }
+
+// ─── Service ──────────────────────────────────────────────────────────────────
 
 @Injectable()
 export class RecommendationsService {
@@ -285,30 +349,28 @@ export class RecommendationsService {
     const draft = await this.draftRepo.findOne({
       where: { userId, status: DraftStatus.ACTIVE },
     });
-    if (!draft) {
-      return this.errorResult('No active draft found');
-    }
+    if (!draft) return this.errorResult('No active draft found');
 
     const teamName = draft.espnTeamName || 'Your Team';
     const leagueSize = draft.leagueSize || 12;
 
-    // 2. Get all picks for this draft
+    // 2. All picks for this draft
     const allPicks = await this.pickRepo.find({
       where: { draftId: draft.id },
       order: { overallPick: 'ASC' },
     });
 
-    const currentPick = allPicks.length + 1; // next pick to be made
+    const currentPick = allPicks.length + 1;
 
-    // 3. Derive user's draft slot from their first pick
+    // 3. Derive draft slot from user's first pick
     let draftSlot: number | null = null;
     if (draft.espnTeamName) {
       const userFirstPick = allPicks.find(
-        (p) => p.pickerTeam && p.pickerTeam.toLowerCase().includes(draft.espnTeamName!.toLowerCase()),
+        (p) =>
+          p.pickerTeam &&
+          p.pickerTeam.toLowerCase().includes(draft.espnTeamName!.toLowerCase()),
       );
-      if (userFirstPick?.overallPick) {
-        draftSlot = userFirstPick.overallPick;
-      }
+      if (userFirstPick?.overallPick) draftSlot = userFirstPick.overallPick;
     }
 
     const nextPick = draftSlot
@@ -321,11 +383,11 @@ export class RecommendationsService {
     const allPlayers = await this.getPlayerCache(spreadsheetId);
     if (allPlayers.length === 0) {
       return this.errorResult(
-        'No player data found. Ensure the spreadsheet is configured (SHEET_TEMPLATE_ID or SHEETS_SPREADSHEET_ID) and reload the cache.',
+        'No player data loaded. Configure SHEETS_SPREADSHEET_ID or SHEET_TEMPLATE_ID, then call POST /recommendations/cache/reload.',
       );
     }
 
-    // 5. Compute drafted player names (case-insensitive)
+    // 5. Available players (not yet drafted)
     const draftedNames = new Set(allPicks.map((p) => p.player.toLowerCase()));
     const available = allPlayers.filter((p) => !draftedNames.has(p.name.toLowerCase()));
 
@@ -341,17 +403,13 @@ export class RecommendationsService {
           )
           .map((p) => p.player.toLowerCase()),
       );
-      for (const p of allPlayers) {
-        if (userPickNames.has(p.name.toLowerCase())) roster.push(p);
-      }
+      roster.push(...allPlayers.filter((p) => userPickNames.has(p.name.toLowerCase())));
     }
 
-    // 7. Team needs
-    const teamPositions = new Set(roster.map((p) => normalizePosition(p.position)));
-    const typicalNeeds = ['C', '1B', '2B', '3B', 'SS', 'OF', 'P'];
-    const openNeeds = typicalNeeds.filter((pos) => !teamPositions.has(pos));
+    // 7. Compute roster needs
+    const needs = computeRosterNeeds(roster);
 
-    // 8. Index available players by position
+    // 8. Index available players by normalized position
     const availableByPosition = new Map<string, PlayerMeta[]>();
     for (const p of available) {
       const pos = normalizePosition(p.position);
@@ -359,11 +417,13 @@ export class RecommendationsService {
       availableByPosition.get(pos)!.push(p);
     }
 
-    // 9. Build candidate set
-    // Top 25 by Rotowire rank + top 5 per open need position (deduped)
+    // 9. Build candidate set:
+    //    - Top 25 by Rotowire rank (value floor)
+    //    - Top 5 per unfilled position (need floor)
     const topByRw = [...available].sort((a, b) => a.rotowireRank - b.rotowireRank).slice(0, 25);
     const needCandidates: PlayerMeta[] = [];
-    for (const pos of openNeeds) {
+    for (const need of needs.openNeeds) {
+      const pos = need.split(' ')[0]; // e.g. "OF" from "OF (need 3 more)"
       const atPos = (availableByPosition.get(pos) || [])
         .sort((a, b) => a.rotowireRank - b.rotowireRank)
         .slice(0, 5);
@@ -373,15 +433,15 @@ export class RecommendationsService {
       ...new Map([...topByRw, ...needCandidates].map((p) => [p.name, p])).values(),
     ];
 
-    // 10. Compute features for each candidate, sort by urgency
+    // 10. Compute features and sort by urgency
     const withFeatures = candidateSet
       .map((p) =>
-        computeFeatures(p, currentPick, nextPick, picksUntilNext, teamPositions, availableByPosition),
+        computeFeatures(p, currentPick, picksUntilNext, needs.rosterByPosition, availableByPosition),
       )
       .sort((a, b) => b.urgencyScore - a.urgencyScore)
-      .slice(0, 20); // send top 20 to Claude
+      .slice(0, 20);
 
-    // 11. Detect position runs
+    // 11. Position run detection
     const positionRuns = detectPositionRuns(allPicks);
 
     // 12. Call Claude
@@ -393,20 +453,14 @@ export class RecommendationsService {
       picksUntilNext,
       draftSlot,
       roster,
-      openNeeds,
+      needs,
       positionRuns,
       withFeatures,
     );
 
-    let aiResult: RecommendationResult['topPick'] & {
-      alternatives: RecommendationResult['alternatives'];
-      likelyGone: RecommendationResult['likelyGone'];
-      canWait: RecommendationResult['canWait'];
-    };
-
     try {
       if (!process.env.ANTHROPIC_API_KEY) {
-        throw new Error('ANTHROPIC_API_KEY not configured');
+        throw new Error('ANTHROPIC_API_KEY not set');
       }
       const model = process.env.AI_MODEL || 'claude-sonnet-4-6';
       const response = await this.anthropic.messages.create({
@@ -416,45 +470,34 @@ export class RecommendationsService {
         messages: [{ role: 'user', content: userMessage }],
       });
 
-      const text =
-        response.content[0].type === 'text' ? response.content[0].text : '';
+      const text = response.content[0].type === 'text' ? response.content[0].text : '';
       const parsed = JSON.parse(text);
-      aiResult = {
-        ...parsed.topPick,
-        alternatives: parsed.alternatives || [],
-        likelyGone: parsed.likelyGone || [],
-        canWait: parsed.canWait || [],
+
+      return {
+        generatedAt: new Date().toISOString(),
+        context: {
+          teamName,
+          currentPick,
+          nextPick,
+          picksUntilNext,
+          rosterCount: roster.length,
+          openNeeds: needs.openNeeds,
+        },
+        topPick: parsed.topPick ?? null,
+        alternatives: parsed.alternatives ?? [],
+        likelyGone: parsed.likelyGone ?? [],
+        canWait: parsed.canWait ?? [],
       };
     } catch (err: any) {
       this.logger.error(`AI call failed: ${err.message}`);
       return this.errorResult(`AI call failed: ${err.message}`);
     }
-
-    return {
-      generatedAt: new Date().toISOString(),
-      context: {
-        teamName,
-        currentPick,
-        nextPick,
-        picksUntilNext,
-        rosterCount: roster.length,
-      },
-      topPick: {
-        player: aiResult.player,
-        position: aiResult.position,
-        rotowireRank: aiResult.rotowireRank,
-        explanation: aiResult.explanation,
-      },
-      alternatives: aiResult.alternatives,
-      likelyGone: aiResult.likelyGone,
-      canWait: aiResult.canWait,
-    };
   }
 
   private errorResult(msg: string): RecommendationResult {
     return {
       generatedAt: new Date().toISOString(),
-      context: { teamName: '', currentPick: 0, nextPick: null, picksUntilNext: null, rosterCount: 0 },
+      context: { teamName: '', currentPick: 0, nextPick: null, picksUntilNext: null, rosterCount: 0, openNeeds: [] },
       topPick: null,
       alternatives: [],
       likelyGone: [],
