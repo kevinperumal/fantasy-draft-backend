@@ -78,6 +78,29 @@ export class SheetsService {
     }
   }
 
+  // Read all player rows from the sheet. Returns raw string arrays (one per row).
+  // Uses the spreadsheetId if provided, otherwise falls back to SHEETS_SPREADSHEET_ID.
+  // Skips the header row by using the SHEET_PLAYER_RANGE env var (default A2:H).
+  async readPlayerRows(spreadsheetId?: string): Promise<string[][]> {
+    if (!this.sheets) {
+      this.logger.warn('Sheets client not initialized — cannot read player rows');
+      return [];
+    }
+    const targetId = spreadsheetId || this.fallbackSpreadsheetId;
+    if (!targetId) {
+      this.logger.warn('No spreadsheet ID available — skipping player row read');
+      return [];
+    }
+    const range = process.env.SHEET_PLAYER_RANGE || 'A2:H';
+    try {
+      const res = await this.sheets.spreadsheets.values.get({ spreadsheetId: targetId, range });
+      return (res.data.values || []) as string[][];
+    } catch (err: any) {
+      this.logger.error(`Failed to read player rows: ${err.message}`);
+      return [];
+    }
+  }
+
   async highlightPlayer(player: string, team: string, position: string, spreadsheetId?: string) {
     if (!this.sheets) {
       this.logger.error('Sheets client not initialized yet');

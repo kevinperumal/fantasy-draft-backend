@@ -37,6 +37,14 @@ export class Draft {
   @Column({ nullable: true, type: 'text' })
   sheetUrl: string;
 
+  // ESPN fantasy team name for the user (used for AI roster tracking)
+  @Column({ nullable: true, type: 'text' })
+  espnTeamName: string | null;
+
+  // Number of teams in the league (used for snake draft pick calculation)
+  @Column({ nullable: true })
+  leagueSize: number | null;
+
   @Column({
     type: 'enum',
     enum: DraftStatus,

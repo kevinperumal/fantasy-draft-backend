@@ -5,11 +5,13 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { DraftsModule } from './drafts/drafts.module';
 import { AuthModule } from './auth/auth.module';
+import { RecommendationsModule } from './recommendations/recommendations.module';
 import { AppController } from './app.controller';
 import { JwtAuthGuard } from './auth/jwt-auth.guard';
 import { User } from './entities/user.entity';
 import { Draft } from './entities/draft.entity';
 import { Job } from './entities/job.entity';
+import { PickRecord } from './entities/pick.entity';
 
 @Module({
   imports: [
@@ -20,7 +22,7 @@ import { Job } from './entities/job.entity';
       useFactory: (config: ConfigService) => ({
         type: 'postgres',
         url: config.getOrThrow<string>('DATABASE_URL'),
-        entities: [User, Draft, Job],
+        entities: [User, Draft, Job, PickRecord],
         synchronize: config.get<string>('DB_SYNCHRONIZE') === 'true',
         ssl:
           config.get<string>('DATABASE_SSL') !== 'false'
@@ -31,6 +33,7 @@ import { Job } from './entities/job.entity';
     ThrottlerModule.forRoot([{ ttl: 60000, limit: 60 }]),
     AuthModule,
     DraftsModule,
+    RecommendationsModule,
   ],
   controllers: [AppController],
   providers: [

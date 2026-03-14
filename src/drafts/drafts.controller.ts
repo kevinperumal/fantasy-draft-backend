@@ -35,6 +35,12 @@ export class PickDto {
   @IsString()
   @MaxLength(50)
   position: string;
+
+  // ESPN fantasy team name that made this pick (best-effort from DOM)
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  pickerTeam?: string;
 }
 
 @Controller()
@@ -46,9 +52,15 @@ export class DraftsController {
   @Post('drafts')
   createDraft(
     @Req() req: any,
-    @Body() body: { leagueId: string; sport?: string },
+    @Body() body: { leagueId: string; sport?: string; espnTeamName?: string; leagueSize?: number },
   ) {
-    return this.draftsService.createDraft(req.user.sub, body.leagueId, body.sport);
+    return this.draftsService.createDraft(
+      req.user.sub,
+      body.leagueId,
+      body.sport,
+      body.espnTeamName,
+      body.leagueSize,
+    );
   }
 
   @Get('drafts/active')

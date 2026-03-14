@@ -6,6 +6,7 @@ import { PickDto } from './drafts.controller';
 import { SheetsService } from '../sheets/sheets.service';
 import { Draft, DraftStatus } from '../entities/draft.entity';
 import { Job, JobStatus } from '../entities/job.entity';
+import { PickRecord } from '../entities/pick.entity';
 
 @Injectable()
 export class DraftsService {
@@ -16,21 +17,39 @@ export class DraftsService {
     private readonly config: ConfigService,
     @InjectRepository(Draft) private draftRepo: Repository<Draft>,
     @InjectRepository(Job) private jobRepo: Repository<Job>,
+    @InjectRepository(PickRecord) private pickRepo: Repository<PickRecord>,
   ) {}
 
   async processPick(pick: PickDto) {
-    const { player, team, position, sessionId, leagueId } = pick;
+    const { player, team, position, sessionId, leagueId, pickerTeam } = pick;
     this.logger.log(`Processing pick: ${player} / ${team} / ${position} (session: ${sessionId}, league: ${leagueId})`);
 
+    let draft: Draft | null = null;
     let spreadsheetId: string | undefined;
+
     if (leagueId) {
-      const draft = await this.draftRepo.findOne({
-        where: { leagueId, status: DraftStatus.ACTIVE },
-      });
+      draft = await this.draftRepo.findOne({ where: { leagueId, status: DraftStatus.ACTIVE } });
       if (draft?.sheetUrl) {
         const match = draft.sheetUrl.match(/\/spreadsheets\/d\/([^/]+)/);
         spreadsheetId = match?.[1];
       }
+    }
+
+    // Persist the pick for AI recommendation context
+    if (draft) {
+      const overallPick = (await this.pickRepo.count({ where: { draftId: draft.id } })) + 1;
+      const pickRecord = this.pickRepo.create({
+        draftId: draft.id,
+        leagueId: leagueId ?? undefined,
+        player,
+        nflTeam: team,
+        position,
+        pickerTeam: pickerTeam ?? undefined,
+        overallPick,
+      });
+      await this.pickRepo.save(pickRecord).catch((err) => {
+        this.logger.warn(`Failed to save pick record: ${err.message}`);
+      });
     }
 
     await this.sheetsService.highlightPlayer(player, team, position, spreadsheetId).catch((err) => {
@@ -38,7 +57,13 @@ export class DraftsService {
     });
   }
 
-  async createDraft(userId: string, leagueId: string, sport = 'baseball') {
+  async createDraft(
+    userId: string,
+    leagueId: string,
+    sport = 'baseball',
+    espnTeamName?: string,
+    leagueSize?: number,
+  ) {
     // Enforce one active draft per user
     const existing = await this.draftRepo.findOne({
       where: { userId, status: DraftStatus.ACTIVE },
@@ -61,6 +86,8 @@ export class DraftsService {
       leagueId,
       sport,
       sheetUrl: sheetUrl ?? undefined,
+      espnTeamName: espnTeamName ?? null,
+      leagueSize: leagueSize ?? null,
     });
     const draft = await this.draftRepo.save(draftEntity) as Draft;
 
