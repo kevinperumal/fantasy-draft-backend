@@ -1,22 +1,45 @@
-import { Body, Controller, Get, Param, Post, Req } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  ForbiddenException,
+  Get,
+  Headers,
+  Param,
+  Post,
+  Req,
+} from '@nestjs/common';
+import { IsOptional, IsString, MaxLength } from 'class-validator';
+import { Throttle } from '@nestjs/throttler';
 import { DraftsService } from './drafts.service';
-import { HttpService } from '@nestjs/axios';
 import { Public } from '../auth/public.decorator';
 
 export class PickDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
   sessionId?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
   leagueId?: string;
+
+  @IsString()
+  @MaxLength(100)
   player: string;
+
+  @IsString()
+  @MaxLength(50)
   team: string;
+
+  @IsString()
+  @MaxLength(50)
   position: string;
 }
 
 @Controller()
 export class DraftsController {
-  constructor(
-    private readonly draftsService: DraftsService,
-    private readonly http: HttpService,
-  ) {}
+  constructor(private readonly draftsService: DraftsService) {}
 
   // --- Draft lifecycle endpoints ---
 
@@ -39,23 +62,20 @@ export class DraftsController {
     return { ok: true };
   }
 
-  // --- Legacy pick reporting (called by injected script — no auth cookie) ---
+  // --- Pick reporting (called by injected script — authenticated by shared secret) ---
 
   @Public()
+  @Throttle({ default: { ttl: 60000, limit: 300 } })
   @Post('picks')
-  async handlePick(@Body() body: PickDto) {
+  async handlePick(
+    @Headers('x-pick-secret') secret: string,
+    @Body() body: PickDto,
+  ) {
+    const expected = process.env.PICK_SECRET;
+    if (expected && secret !== expected) {
+      throw new ForbiddenException('Invalid pick secret');
+    }
     await this.draftsService.processPick(body);
     return { ok: true };
-  }
-
-  // --- Legacy direct worker trigger (kept for now, removed in Phase 4) ---
-
-  @Post('monitor')
-  async startMonitor(@Body() body: { leagueId: string; sport?: string }) {
-    const { leagueId, sport = 'baseball' } = body;
-    if (!leagueId) return { error: 'leagueId is required' };
-    const workerBase = process.env.WORKER_URL || 'http://localhost:4000';
-    await this.http.post(`${workerBase}/run`, { leagueId, sport }).toPromise();
-    return { status: 'started', leagueId, sport };
   }
 }

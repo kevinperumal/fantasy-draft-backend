@@ -2,10 +2,10 @@ import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { DraftsModule } from './drafts/drafts.module';
 import { AuthModule } from './auth/auth.module';
 import { AppController } from './app.controller';
-import { WorkerController } from './worker.controller';
 import { JwtAuthGuard } from './auth/jwt-auth.guard';
 import { User } from './entities/user.entity';
 import { Draft } from './entities/draft.entity';
@@ -28,13 +28,16 @@ import { Job } from './entities/job.entity';
             : false,
       }),
     }),
+    ThrottlerModule.forRoot([{ ttl: 60000, limit: 60 }]),
     AuthModule,
     DraftsModule,
   ],
-  controllers: [AppController, WorkerController],
+  controllers: [AppController],
   providers: [
     // Apply JwtAuthGuard to every route; use @Public() to opt out
     { provide: APP_GUARD, useClass: JwtAuthGuard },
+    // Apply rate limiting globally
+    { provide: APP_GUARD, useClass: ThrottlerGuard },
   ],
 })
 export class AppModule {}

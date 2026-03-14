@@ -7,6 +7,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import type { Request } from 'express';
+import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
 import { Public } from './public.decorator';
 
@@ -20,6 +21,7 @@ export class AuthController {
   constructor(private authService: AuthService) {}
 
   @Public()
+  @Throttle({ default: { ttl: 60000, limit: 10 } })
   @Post('login')
   async login(@Body() body: LoginDto) {
     const user = await this.authService.validateUser(body.username, body.password);
