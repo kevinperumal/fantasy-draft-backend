@@ -33,7 +33,9 @@ export class DraftsService {
       }
     }
 
-    await this.sheetsService.highlightPlayer(player, team, position, spreadsheetId);
+    await this.sheetsService.highlightPlayer(player, team, position, spreadsheetId).catch((err) => {
+      this.logger.error(`Failed to highlight player ${player}: ${err.message}`);
+    });
   }
 
   async createDraft(userId: string, leagueId: string, sport = 'baseball') {

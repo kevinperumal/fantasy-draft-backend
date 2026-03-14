@@ -88,9 +88,13 @@ export class SheetsService {
       this.logger.warn('No spreadsheet ID available — skipping highlight');
       return;
     }
-    // Per-draft sheets are fresh duplicates with a single tab (sheetId 0).
-    // The legacy fallback sheet uses SHEETS_SHEET_ID env var.
-    const targetSheetId = spreadsheetId ? 0 : this.sheetId;
+    // For per-draft sheets, look up the actual tab ID from the spreadsheet metadata.
+    // For the legacy fallback sheet, use SHEETS_SHEET_ID env var.
+    let targetSheetId = this.sheetId;
+    if (spreadsheetId) {
+      const meta = await this.sheets.spreadsheets.get({ spreadsheetId: targetSpreadsheetId });
+      targetSheetId = meta.data.sheets?.[0]?.properties?.sheetId ?? 0;
+    }
 
     this.logger.log(`Highlighting player in sheet: ${player} / ${team} / ${position}`);
 
