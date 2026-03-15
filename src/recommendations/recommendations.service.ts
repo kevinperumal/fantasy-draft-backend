@@ -157,9 +157,14 @@ function computeFeatures(
     else if (adpFromNow < picksUntilNext * 1.5) urgencyScore = 40;
     else urgencyScore = 20;
   }
-  // ESPN visibility bump: if ESPN room rank is close to current pick, others will see this player
-  if (player.espnRank < currentPick + 8 && valueVsEspn >= 10) {
-    urgencyScore = Math.min(100, urgencyScore + 15);
+  // ESPN visibility / hidden value bump.
+  // Always apply when Rotowire values the player significantly above ESPN's room rank —
+  // these players are undervalued by the draft room regardless of current pick position.
+  if (valueVsEspn >= 20) urgencyScore = Math.min(100, urgencyScore + 20);
+  else if (valueVsEspn >= 10) urgencyScore = Math.min(100, urgencyScore + 10);
+  // Extra bump if the player is now appearing near the current pick in ESPN (window closing)
+  if (player.espnRank < currentPick + 10 && valueVsEspn >= 5) {
+    urgencyScore = Math.min(100, urgencyScore + 10);
   }
   // Closer bonus: saves are scarce, closers disappear fast
   if (player.closerRank !== null && player.closerRank <= 5) {
