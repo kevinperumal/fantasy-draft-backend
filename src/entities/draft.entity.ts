@@ -42,7 +42,7 @@ export class Draft {
   espnTeamName: string | null;
 
   // Number of teams in the league (used for snake draft pick calculation)
-  @Column({ nullable: true })
+  @Column({ nullable: true, type: 'int' })
   leagueSize: number | null;
 
   @Column({
