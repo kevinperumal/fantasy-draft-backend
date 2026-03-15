@@ -62,11 +62,12 @@ export class DraftsService {
   // when the user doesn't supply it explicitly.
   private resolveEspnTeamName(username: string, explicit?: string): string | null {
     if (explicit) return explicit;
-    const knownTeams: Record<string, string> = {};
-    const u1 = process.env.USER1_USERNAME;
-    const u2 = process.env.USER2_USERNAME;
-    if (u1 && process.env.USER1_ESPN_TEAM_NAME) knownTeams[u1] = process.env.USER1_ESPN_TEAM_NAME;
-    if (u2 && process.env.USER2_ESPN_TEAM_NAME) knownTeams[u2] = process.env.USER2_ESPN_TEAM_NAME;
+    const u1 = process.env.USER1_USERNAME || 'kevin';
+    const u2 = process.env.USER2_USERNAME || 'john';
+    const knownTeams: Record<string, string> = {
+      [u1]: process.env.USER1_ESPN_TEAM_NAME || 'Sonnys Nuts',
+      [u2]: process.env.USER2_ESPN_TEAM_NAME || 'Enzo The Bakers',
+    };
     return knownTeams[username] ?? null;
   }
 
