@@ -336,6 +336,21 @@ export class RecommendationsService {
     return players.length;
   }
 
+  // Resolve best spreadsheet ID for this user, then reload.
+  // Order: active draft sheet → SHEET_TEMPLATE_ID env → SHEETS_SPREADSHEET_ID env
+  async reloadCacheForUser(userId: string): Promise<number> {
+    const draft = await this.draftRepo.findOne({
+      where: { userId, status: DraftStatus.ACTIVE },
+    });
+    const draftSheetId = draft?.sheetUrl?.match(/\/spreadsheets\/d\/([^/]+)/)?.[1];
+    const spreadsheetId =
+      draftSheetId ||
+      process.env.SHEET_TEMPLATE_ID ||
+      process.env.SHEETS_SPREADSHEET_ID ||
+      undefined;
+    return this.reloadCache(spreadsheetId);
+  }
+
   private async getPlayerCache(spreadsheetId?: string): Promise<PlayerMeta[]> {
     const key = spreadsheetId || 'default';
     if (!this.playerCache.has(key)) {
