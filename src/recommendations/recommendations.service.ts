@@ -14,6 +14,17 @@ const ROSTER_TARGETS: Record<string, number> = {
 };
 const TOTAL_ROSTER_SIZE = 25;
 
+// ─── Name normalization ───────────────────────────────────────────────────────
+// Handles mismatches like "C.J." vs "CJ", "Jr." suffix, extra whitespace.
+function normalizeName(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/\./g, '')            // C.J. → cj
+    .replace(/\b(jr|sr|ii|iii|iv|v)\b/g, '') // strip name suffixes
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 // ─── Player metadata from spreadsheet ────────────────────────────────────────
 // Column layout (confirmed from sheet): A=RotoV, B=Player, C=Pro Team,
 // D=Position, E=ESPN Draft Room rank, F=ADP, G=Pitcher flag, H=Closer Rank
@@ -408,8 +419,8 @@ export class RecommendationsService {
     }
 
     // 5. Available players (not yet drafted)
-    const draftedNames = new Set(allPicks.map((p) => p.player.toLowerCase()));
-    const available = allPlayers.filter((p) => !draftedNames.has(p.name.toLowerCase()));
+    const draftedNames = new Set(allPicks.map((p) => normalizeName(p.player)));
+    const available = allPlayers.filter((p) => !draftedNames.has(normalizeName(p.name)));
 
     // 6. User's roster
     const roster: PlayerMeta[] = [];
@@ -421,9 +432,9 @@ export class RecommendationsService {
               p.pickerTeam &&
               p.pickerTeam.toLowerCase().includes(draft.espnTeamName!.toLowerCase()),
           )
-          .map((p) => p.player.toLowerCase()),
+          .map((p) => normalizeName(p.player)),
       );
-      roster.push(...allPlayers.filter((p) => userPickNames.has(p.name.toLowerCase())));
+      roster.push(...allPlayers.filter((p) => userPickNames.has(normalizeName(p.name))));
     }
 
     // 7. Compute roster needs

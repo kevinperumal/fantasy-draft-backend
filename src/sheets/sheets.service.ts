@@ -133,7 +133,8 @@ export class SheetsService {
       const row = vals[i];
       const nameCell = row[0];
       const teamCell = row[1];
-      if (nameCell && nameCell.includes(player) && teamCell === team) {
+      const norm = (s: string) => s.toLowerCase().replace(/\./g, '').replace(/\b(jr|sr|ii|iii|iv|v)\b/gi, '').replace(/\s+/g, ' ').trim();
+      if (nameCell && (nameCell.includes(player) || norm(nameCell).includes(norm(player))) && teamCell === team) {
         rowIndex = i;
         break;
       }
