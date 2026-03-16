@@ -105,11 +105,16 @@ export class LiveDraftService {
    * Embeds BACKEND_URL, PICK_SECRET, and leagueId from env/request.
    */
   getSnippet(leagueId: string): string {
-    const backendUrl = this.config.get<string>('BACKEND_URL') || '';
+    let backendUrl = this.config.get<string>('BACKEND_URL') || '';
+    // Ensure the URL has a protocol — without it browsers treat it as a relative path
+    if (backendUrl && !backendUrl.startsWith('http')) {
+      backendUrl = 'https://' + backendUrl;
+    }
+    backendUrl = backendUrl.replace(/\/+$/, '');
     const pickSecret = this.config.get<string>('PICK_SECRET') || '';
 
-    // The snippet mirrors injected-script.js but is self-contained and
-    // calls /live-draft/initialize before starting the observer.
+    // The snippet is observer-only. Initialization (sheet provisioning + job setup)
+    // is done by the admin UI before the snippet is fetched, so no auth is needed here.
     return `(function liveDraftSnippet() {
   const BACKEND_URL = ${JSON.stringify(backendUrl)};
   const LEAGUE_ID   = ${JSON.stringify(leagueId)};
@@ -119,75 +124,56 @@ export class LiveDraftService {
   const headers = { "Content-Type": "application/json" };
   if (PICK_SECRET) headers["X-Pick-Secret"] = PICK_SECRET;
 
-  // 1. Initialize: provision sheets + set draft state to live
-  fetch(BACKEND_URL + "/live-draft/initialize", {
-    method: "POST",
-    headers: { ...headers, "X-Live-Draft-Secret": PICK_SECRET },
-    body: JSON.stringify({ leagueId: LEAGUE_ID }),
-  })
-    .then(r => r.json())
-    .then(data => {
-      console.log("[DraftHelper] Live draft initialized:", data);
-      startObserver();
-    })
-    .catch(err => {
-      console.error("[DraftHelper] Failed to initialize live draft:", err);
-      // Start observer anyway so picks still flow
-      startObserver();
-    });
-
-  function startObserver() {
-    const targetNode = document.querySelector(".pa3");
-    if (!targetNode) {
-      console.error("[DraftHelper] Could not find draft log container (.pa3).");
-      return;
-    }
-
-    const observer = new MutationObserver((mutationsList) => {
-      for (const mutation of mutationsList) {
-        if (mutation.type !== "childList" || !mutation.addedNodes.length) continue;
-        const node = mutation.addedNodes[0];
-        try {
-          const container = node.childNodes[0]?.childNodes[1];
-          if (!container) continue;
-
-          let name     = container.childNodes[0]?.innerText || "";
-          let team     = container.childNodes[2]?.innerText || "";
-          let position = container.childNodes[4]?.innerText || "";
-
-          name = name.split(" ").slice(0, 3).join(" ").trim();
-          team = team.toUpperCase();
-
-          let pickerTeam = "";
-          try {
-            const headerNode = node.childNodes[0]?.childNodes[0];
-            pickerTeam = (headerNode?.innerText || "").trim();
-            if (/round|pick\\s+\\d/i.test(pickerTeam)) pickerTeam = "";
-          } catch { pickerTeam = ""; }
-
-          fetch(BACKEND_URL + "/picks", {
-            method: "POST",
-            headers,
-            body: JSON.stringify({
-              sessionId: SESSION_ID,
-              leagueId: LEAGUE_ID,
-              player: name,
-              team,
-              position,
-              pickerTeam: pickerTeam || undefined,
-            }),
-          })
-            .then(r => console.log("[DraftHelper] Pick sent:", name, r.status))
-            .catch(err => console.error("[DraftHelper] Error posting pick:", name, err));
-        } catch (err) {
-          console.error("[DraftHelper] Error parsing mutation:", err);
-        }
-      }
-    });
-
-    observer.observe(targetNode, { attributes: true, childList: true, subtree: true });
-    console.log("[DraftHelper] Observer started for league", LEAGUE_ID, "watching .pa3");
+  const targetNode = document.querySelector(".pa3");
+  if (!targetNode) {
+    console.error("[DraftHelper] Could not find draft log container (.pa3). Are you in the draft room?");
+    return;
   }
+
+  const observer = new MutationObserver((mutationsList) => {
+    for (const mutation of mutationsList) {
+      if (mutation.type !== "childList" || !mutation.addedNodes.length) continue;
+      const node = mutation.addedNodes[0];
+      try {
+        const container = node.childNodes[0]?.childNodes[1];
+        if (!container) continue;
+
+        let name     = container.childNodes[0]?.innerText || "";
+        let team     = container.childNodes[2]?.innerText || "";
+        let position = container.childNodes[4]?.innerText || "";
+
+        name = name.split(" ").slice(0, 3).join(" ").trim();
+        team = team.toUpperCase();
+
+        let pickerTeam = "";
+        try {
+          const headerNode = node.childNodes[0]?.childNodes[0];
+          pickerTeam = (headerNode?.innerText || "").trim();
+          if (/round|pick\\s+\\d/i.test(pickerTeam)) pickerTeam = "";
+        } catch { pickerTeam = ""; }
+
+        fetch(BACKEND_URL + "/picks", {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            sessionId: SESSION_ID,
+            leagueId: LEAGUE_ID,
+            player: name,
+            team,
+            position,
+            pickerTeam: pickerTeam || undefined,
+          }),
+        })
+          .then(r => console.log("[DraftHelper] Pick sent:", name, r.status))
+          .catch(err => console.error("[DraftHelper] Error posting pick:", name, err));
+      } catch (err) {
+        console.error("[DraftHelper] Error parsing mutation:", err);
+      }
+    }
+  });
+
+  observer.observe(targetNode, { attributes: true, childList: true, subtree: true });
+  console.log("[DraftHelper] Observer started for league", LEAGUE_ID, "watching .pa3");
 })();`;
   }
 }
