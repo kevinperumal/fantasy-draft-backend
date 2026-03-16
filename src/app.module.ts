@@ -6,6 +6,7 @@ import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { DraftsModule } from './drafts/drafts.module';
 import { AuthModule } from './auth/auth.module';
 import { RecommendationsModule } from './recommendations/recommendations.module';
+import { LiveDraftModule } from './live-draft/live-draft.module';
 import { AppController } from './app.controller';
 import { JwtAuthGuard } from './auth/jwt-auth.guard';
 import { User } from './entities/user.entity';
@@ -34,6 +35,7 @@ import { PickRecord } from './entities/pick.entity';
     AuthModule,
     DraftsModule,
     RecommendationsModule,
+    LiveDraftModule,
   ],
   controllers: [AppController],
   providers: [
