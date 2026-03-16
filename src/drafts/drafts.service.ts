@@ -5,7 +5,7 @@ import { ConfigService } from '@nestjs/config';
 import { PickDto } from './drafts.controller';
 import { SheetsService } from '../sheets/sheets.service';
 import { Draft, DraftStatus } from '../entities/draft.entity';
-import { Job, JobStatus } from '../entities/job.entity';
+import { Job, JobPhase, JobStatus } from '../entities/job.entity';
 import { PickRecord } from '../entities/pick.entity';
 
 @Injectable()
@@ -126,6 +126,24 @@ export class DraftsService {
     });
 
     return { draft, job };
+  }
+
+  async completeDraft(userId: string, draftId: string) {
+    const draft = await this.draftRepo.findOne({ where: { id: draftId, userId } });
+    if (!draft) throw new NotFoundException('Draft not found');
+
+    await this.jobRepo
+      .createQueryBuilder()
+      .update(Job)
+      .set({ status: JobStatus.SUCCEEDED, phase: JobPhase.COMPLETED })
+      .where('draftId = :draftId AND status IN (:...statuses)', {
+        draftId,
+        statuses: [JobStatus.QUEUED, JobStatus.RUNNING],
+      })
+      .execute();
+
+    draft.status = DraftStatus.COMPLETED;
+    await this.draftRepo.save(draft);
   }
 
   async cancelDraft(userId: string, draftId: string) {

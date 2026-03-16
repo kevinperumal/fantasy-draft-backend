@@ -75,6 +75,12 @@ export class DraftsController {
     return { ok: true };
   }
 
+  @Post('drafts/:id/complete')
+  async completeDraft(@Req() req: any, @Param('id') id: string) {
+    await this.draftsService.completeDraft(req.user.sub, id);
+    return { ok: true };
+  }
+
   // --- Pick reporting (called by injected script — authenticated by shared secret) ---
 
   @Public()
