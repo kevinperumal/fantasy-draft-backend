@@ -142,15 +142,18 @@ export class DraftsService {
       })
       .execute();
 
-    draft.status = DraftStatus.COMPLETED;
-    await this.draftRepo.save(draft);
+    await this.draftRepo
+      .createQueryBuilder()
+      .update(Draft)
+      .set({ status: DraftStatus.COMPLETED })
+      .where('id = :draftId AND "userId" = :userId', { draftId, userId })
+      .execute();
   }
 
   async cancelDraft(userId: string, draftId: string) {
     const draft = await this.draftRepo.findOne({ where: { id: draftId, userId } });
     if (!draft) throw new NotFoundException('Draft not found');
 
-    // Cancel any non-terminal jobs
     await this.jobRepo
       .createQueryBuilder()
       .update(Job)
@@ -161,7 +164,11 @@ export class DraftsService {
       })
       .execute();
 
-    draft.status = DraftStatus.CANCELED;
-    await this.draftRepo.save(draft);
+    await this.draftRepo
+      .createQueryBuilder()
+      .update(Draft)
+      .set({ status: DraftStatus.CANCELED })
+      .where('id = :draftId AND "userId" = :userId', { draftId, userId })
+      .execute();
   }
 }
