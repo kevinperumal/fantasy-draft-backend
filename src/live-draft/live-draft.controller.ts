@@ -1,15 +1,4 @@
-import {
-  Controller,
-  Post,
-  Get,
-  Body,
-  Query,
-  Headers,
-  UnauthorizedException,
-  Logger,
-} from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { Public } from '../auth/public.decorator';
+import { Controller, Post, Get, Body, Query } from '@nestjs/common';
 import { LiveDraftService } from './live-draft.service';
 import { IsString } from 'class-validator';
 
@@ -20,56 +9,27 @@ class InitializeLiveDraftDto {
 
 @Controller('live-draft')
 export class LiveDraftController {
-  private readonly logger = new Logger(LiveDraftController.name);
-
-  constructor(
-    private readonly liveDraftService: LiveDraftService,
-    private readonly config: ConfigService,
-  ) {}
-
-  private checkSecret(headerValue: string | undefined) {
-    const secret = this.config.get<string>('LIVE_DRAFT_SECRET');
-    if (!secret) {
-      this.logger.warn('LIVE_DRAFT_SECRET not set — live draft endpoints are unprotected');
-      return;
-    }
-    if (headerValue !== secret) {
-      throw new UnauthorizedException('Invalid X-Live-Draft-Secret');
-    }
-  }
+  constructor(private readonly liveDraftService: LiveDraftService) {}
 
   /**
    * POST /live-draft/initialize
    * Cancels any active drafts for both users, provisions new sheets,
    * and sets jobs to RUNNING/draft_live so the frontend shows the live panel.
-   *
-   * Protected by X-Live-Draft-Secret header.
+   * JWT-protected (global JwtAuthGuard).
    */
-  @Public()
   @Post('initialize')
-  async initialize(
-    @Body() dto: InitializeLiveDraftDto,
-    @Headers('x-live-draft-secret') secret: string | undefined,
-  ) {
-    this.checkSecret(secret);
+  initialize(@Body() dto: InitializeLiveDraftDto) {
     return this.liveDraftService.initialize(dto.leagueId);
   }
 
   /**
    * GET /live-draft/snippet?leagueId=...
-   * Returns a ready-to-paste JavaScript snippet pre-filled with BACKEND_URL,
+   * Returns a ready-to-paste JS snippet pre-filled with BACKEND_URL,
    * PICK_SECRET, and the requested leagueId.
-   *
-   * Protected by X-Live-Draft-Secret header.
+   * JWT-protected (global JwtAuthGuard).
    */
-  @Public()
   @Get('snippet')
-  getSnippet(
-    @Query('leagueId') leagueId: string,
-    @Headers('x-live-draft-secret') secret: string | undefined,
-  ) {
-    this.checkSecret(secret);
-    const snippet = this.liveDraftService.getSnippet(leagueId || '');
-    return { snippet };
+  getSnippet(@Query('leagueId') leagueId: string) {
+    return { snippet: this.liveDraftService.getSnippet(leagueId || '') };
   }
 }
