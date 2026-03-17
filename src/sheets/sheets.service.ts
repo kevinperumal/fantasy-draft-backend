@@ -1,6 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { google, sheets_v4 } from 'googleapis';
 
+// Normalise a player name for fuzzy matching
+function normName(s: string): string {
+  return s.toLowerCase().replace(/\./g, '').replace(/\b(jr|sr|ii|iii|iv|v)\b/gi, '').replace(/\s+/g, ' ').trim();
+}
+
 @Injectable()
 export class SheetsService {
   private readonly logger = new Logger(SheetsService.name);
@@ -10,6 +15,13 @@ export class SheetsService {
   private readonly fallbackSpreadsheetId = process.env.SHEETS_SPREADSHEET_ID || '';
   private readonly sheetId = parseInt(process.env.SHEETS_SHEET_ID || '0', 10);
   private readonly highlightColumnCount = 8;
+
+  // Per-spreadsheet caches so we never re-read the sheet on every pick.
+  // Key: spreadsheetId
+  // tabIdCache: the integer sheet tab ID (from spreadsheets.get metadata)
+  // rowCache: Map of `normName(player)|TEAM` → 0-based rowIndex
+  private tabIdCache = new Map<string, number>();
+  private rowCache = new Map<string, Map<string, number>>();
 
   constructor() {
     this.initClient()
@@ -101,6 +113,47 @@ export class SheetsService {
     }
   }
 
+  // Resolve the integer tab ID for a spreadsheet, caching after the first lookup.
+  private async resolveTabId(spreadsheetId: string, isDraftSheet: boolean): Promise<number> {
+    if (!isDraftSheet) return this.sheetId; // legacy fallback uses env var
+    if (this.tabIdCache.has(spreadsheetId)) return this.tabIdCache.get(spreadsheetId)!;
+    const meta = await this.sheets!.spreadsheets.get({ spreadsheetId });
+    const id = meta.data.sheets?.[0]?.properties?.sheetId ?? 0;
+    this.tabIdCache.set(spreadsheetId, id);
+    return id;
+  }
+
+  // Build (or return cached) name+team → rowIndex lookup for a spreadsheet.
+  // One read per draft per deploy — never re-read during picks.
+  private async resolveRowMap(spreadsheetId: string): Promise<Map<string, number>> {
+    if (this.rowCache.has(spreadsheetId)) return this.rowCache.get(spreadsheetId)!;
+
+    const res = await this.sheets!.spreadsheets.values.get({
+      spreadsheetId,
+      range: 'B:D',
+    });
+    const vals = (res.data.values || []) as string[][];
+    const map = new Map<string, number>();
+    for (let i = 0; i < vals.length; i++) {
+      const nameCell = vals[i][0];
+      const teamCell = vals[i][1];
+      if (nameCell && teamCell) {
+        map.set(`${normName(nameCell)}|${teamCell.toUpperCase()}`, i);
+        // Also store original casing for exact-match lookup
+        map.set(`${nameCell}|${teamCell.toUpperCase()}`, i);
+      }
+    }
+    this.rowCache.set(spreadsheetId, map);
+    this.logger.log(`Row cache built for ${spreadsheetId}: ${vals.length} rows`);
+    return map;
+  }
+
+  // Evict caches for a spreadsheet (call when a new draft sheet is provisioned).
+  evictCache(spreadsheetId: string) {
+    this.tabIdCache.delete(spreadsheetId);
+    this.rowCache.delete(spreadsheetId);
+  }
+
   async highlightPlayer(player: string, team: string, position: string, spreadsheetId?: string) {
     if (!this.sheets) {
       this.logger.error('Sheets client not initialized yet');
@@ -111,32 +164,29 @@ export class SheetsService {
       this.logger.warn('No spreadsheet ID available — skipping highlight');
       return;
     }
-    // For per-draft sheets, look up the actual tab ID from the spreadsheet metadata.
-    // For the legacy fallback sheet, use SHEETS_SHEET_ID env var.
-    let targetSheetId = this.sheetId;
-    if (spreadsheetId) {
-      const meta = await this.sheets.spreadsheets.get({ spreadsheetId: targetSpreadsheetId });
-      targetSheetId = meta.data.sheets?.[0]?.properties?.sheetId ?? 0;
-    }
 
     this.logger.log(`Highlighting player in sheet: ${player} / ${team} / ${position}`);
 
-    const res = await this.sheets.spreadsheets.values.get({
-      spreadsheetId: targetSpreadsheetId,
-      range: 'B:D',
-    });
+    const isDraftSheet = !!spreadsheetId;
+    const [targetSheetId, rowMap] = await Promise.all([
+      this.resolveTabId(targetSpreadsheetId, isDraftSheet),
+      this.resolveRowMap(targetSpreadsheetId),
+    ]);
 
-    const vals = res.data.values || [];
-    let rowIndex = -1;
+    const teamUpper = team.toUpperCase();
+    const normPlayer = normName(player);
 
-    for (let i = 0; i < vals.length; i++) {
-      const row = vals[i];
-      const nameCell = row[0];
-      const teamCell = row[1];
-      const norm = (s: string) => s.toLowerCase().replace(/\./g, '').replace(/\b(jr|sr|ii|iii|iv|v)\b/gi, '').replace(/\s+/g, ' ').trim();
-      if (nameCell && (nameCell.includes(player) || norm(nameCell).includes(norm(player))) && teamCell === team) {
-        rowIndex = i;
-        break;
+    // Try exact key first, then normalized key
+    let rowIndex = rowMap.get(`${player}|${teamUpper}`) ?? rowMap.get(`${normPlayer}|${teamUpper}`) ?? -1;
+
+    // Fallback: prefix scan (handles cases where sheet has "First Last Jr" vs "First Last")
+    if (rowIndex === -1) {
+      for (const [key, idx] of rowMap) {
+        const [keyName, keyTeam] = key.split('|');
+        if (keyTeam === teamUpper && (keyName.includes(normPlayer) || normPlayer.includes(keyName))) {
+          rowIndex = idx;
+          break;
+        }
       }
     }
 
